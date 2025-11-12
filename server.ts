@@ -110,7 +110,10 @@ async function handleTelegramUpdate(update: any) {
         await sendTelegramMessage(chatId, "👋 Ciao! Sono il tuo bot Telegram collegato al server Node.js.");
     } else if (text.toLowerCase().includes("ciao")) {
         await sendTelegramMessage(chatId, "Ciao anche a te! 😊");
-    } else {
+    } else if (text=="/capitale") {
+        await sendTelegramMessage(chatId, "Ciao poveraccio del cazzo hai 0 euro in banca");
+    }
+    else  {
         await sendTelegramMessage(chatId, `Hai scritto: ${text}`);
     }
 }

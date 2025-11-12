@@ -1,0 +1,38 @@
+{
+  "name": "mylibrary",
+  "version": "1.0.0",
+  "description": "My NPM library",
+  "main": "server.js",
+  "dependencies": {
+    "@types/node": "^20.11.0",
+    "axios": "^1.7.2",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.2",
+    "colors": "^1.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-fileupload": "^1.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "mime": "^3.0.0",
+    "mongodb": "^6.1.0",
+    "nodemailer": "^6.9.13",
+    "nodemon": "^3.0.1",
+    "openai": "^4.44.0",
+    "socket.io": "^4.7.5",
+    "streamifier": "^0.1.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon server.ts"
+  },
+  "keywords": [
+    "Node",
+    "Express",
+    "Mongo"
+  ],
+  "author": "Corneanu George Alexandru",
+  "license": "ISC"
+}

@@ -212,7 +212,8 @@ async function checkMarket() {
     const limit = 50;
 
     const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=50`);
-    const candles = response.data.result.map((c: any) => parseFloat(c.close));
+    console.log(response.data);
+    const candles = response.data.result.list.map((c: any) => parseFloat(c.close));
 
     // 2. Calcolo indicatori
     const maFast = sma(candles, 10);

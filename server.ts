@@ -12,6 +12,7 @@ import axios from 'axios';
 
 // Lettura delle password e parametri fondamentali
 _dotenv.config({ "path": ".env" });
+const { RestClientV5 } = require('bybit-api');
 
 const PRIVATE_KEY = _fs.readFileSync("./keys/privateKey.pem", "utf8");
 const CERTIFICATE = _fs.readFileSync("./keys/certificate.crt", "utf8");
@@ -22,6 +23,8 @@ const app = _express();
 // Creazione ed avvio del server
 // app è il router di Express, si occupa di tutta la gestione delle richieste http
 const PORT: number = parseInt(process.env.PORT);
+let API_KEY_BYBIT = process.env.API_KEY_BYBIT;
+let SECRET_API_KEY_BYBIT = process.env.SECRET_API_KEY_BYBIT;
 let paginaErrore;
 const server = _http.createServer(app);
 // Il secondo parametro facoltativo ipAddress consente di mettere il server in ascolto su una delle interfacce della macchina, se non lo metto viene messo in ascolto su tutte le interfacce (3 --> loopback e 2 di rete)
@@ -111,7 +114,7 @@ async function handleTelegramUpdate(update: any) {
     } else if (text.toLowerCase().includes("ciao")) {
         await sendTelegramMessage(chatId, "Ciao anche a te! 😊");
     } else if (text=="/capitale") {
-        await sendTelegramMessage(chatId, "Ciao poveraccio del cazzo hai 0 euro in banca");
+        await walletBalance("UNIFIED", chatId);
     }
     else  {
         await sendTelegramMessage(chatId, `Hai scritto: ${text}`);
@@ -152,6 +155,34 @@ app.get("/api/telegram/info", async (req: any, res: any) => {
         res.status(500).send(err.response?.data || err.message);
     }
 });
+
+//********************************************************************************************//
+// Fine codice Telegram Bot
+//********************************************************************************************//
+
+async function walletBalance(account: any, chatId: any) {
+    let accountType = account;
+    const client = new RestClientV5({
+        testnet: false,
+        key: API_KEY_BYBIT,
+        secret: SECRET_API_KEY_BYBIT,
+    });
+
+    client.getWalletBalance({accountType: accountType,})
+    .catch(async (error) => {
+        await sendTelegramMessage(chatId, JSON.stringify(error));
+    })
+    .then(async (response) => {
+        await sendTelegramMessage(chatId, String(response.result.list[0].totalEquity));
+    });
+};
+
+//********************************************************************************************//
+// Inizio codice specifico delle API ByBit
+//********************************************************************************************//
+
+
+
 
 //********************************************************************************************//
 // Fine codice Telegram Bot

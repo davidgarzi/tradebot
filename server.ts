@@ -212,8 +212,11 @@ async function checkMarket() {
     const limit = 50;
 
     const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=50`);
-    console.log(response.data);
-    const candles = response.data.result.list.map((c: any) => parseFloat(c.close));
+   
+    const candles = response.data.result.list.map((c: any) => parseFloat(c[4]));
+    console.log("candles: "+candles);
+    console.log(JSON.stringify(response.data.result.list, null, 2));
+
 
     // 2. Calcolo indicatori
     const maFast = sma(candles, 10);
@@ -221,24 +224,44 @@ async function checkMarket() {
     const currentRSI = rsi(candles, 14);
     const currentPrice = candles[candles.length - 1];
 
+    console.log(`MA10: ${maFast.toFixed(2)}, MA30: ${maSlow.toFixed(2)}, RSI: ${currentRSI.toFixed(2)}`);
+
     // 3. Decidi direzione mercato
     let action: "LONG" | "SHORT" | null = null;
-    if (maFast > maSlow && currentRSI < 70) {
-        action = "LONG";
-    } else if (maFast < maSlow && currentRSI > 30) {
-        action = "SHORT";
-    }
+
+// Parametri di controllo extra
+const maDiffThreshold = 0.5; // percentuale minima tra MA per considerare un segnale valido
+const rsiOverbought = 70;
+const rsiOversold = 30;
+
+// Differenza percentuale tra MA
+const maDiffPercent = ((maFast - maSlow) / maSlow) * 100;
+
+// Logica per LONG
+if (maFast > maSlow && currentRSI < rsiOverbought && maDiffPercent > maDiffThreshold) {
+    action = "LONG";
+}
+// Logica per SHORT
+else if (maFast < maSlow && currentRSI > rsiOversold && maDiffPercent < -maDiffThreshold) {
+    action = "SHORT";
+}
+// Se nessuna condizione soddisfatta, action rimane null
+else {
+    action = null;
+}
+
+console.log("Azione decisa:", action);
 
     // 4. Simula apertura ordine
     if (action) {
-        const tpPercent = action === "LONG" ? 2 : -2; // TP +2% per long, -2% per short
-        const slPercent = action === "LONG" ? -1 : 1; // SL -1% per long, +1% per short
+        const tpPercent = action === "LONG" ? 1 : -2; // TP +2% per long, -2% per short
+        const slPercent = action === "LONG" ? -0.5 : 1; // SL -1% per long, +1% per short
 
         const takeProfit = currentPrice * (1 + tpPercent / 100);
         const stopLoss = currentPrice * (1 + slPercent / 100);
 
         console.log(`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
-        await sendTelegramMessage(String(8524476908),`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`); 
+        //await sendTelegramMessage(String(8524476908),`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`); 
     } else {
         console.log("Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.");
         //await sendTelegramMessage(String(8524476908),`Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.`);

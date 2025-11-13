@@ -159,7 +159,9 @@ app.get("/api/telegram/info", async (req: any, res: any) => {
 //********************************************************************************************//
 // Fine codice Telegram Bot
 //********************************************************************************************//
-
+//********************************************************************************************//
+// Inizio codice specifico delle API ByBit
+//********************************************************************************************//
 async function walletBalance(account: any, chatId: any) {
     let accountType = account;
     const client = new RestClientV5({
@@ -176,18 +178,78 @@ async function walletBalance(account: any, chatId: any) {
         await sendTelegramMessage(chatId, String(response.result.list[0].totalEquity));
     });
 };
+//********************************************************************************************//
+// Fine codice bybit
+//********************************************************************************************//
+//********************************************************************************************//
+// Inizio logica bot
+//********************************************************************************************//
+// Funzione helper per calcolare media mobile semplice
+function sma(data: number[], period: number): number {
+    const slice = data.slice(-period);
+    const sum = slice.reduce((a, b) => a + b, 0);
+    return sum / period;
+}
+
+// Funzione helper per calcolare RSI (versione semplificata)
+function rsi(data: number[], period: number): number {
+    let gains = 0;
+    let losses = 0;
+    for (let i = data.length - period; i < data.length - 1; i++) {
+        const change = data[i + 1] - data[i];
+        if (change > 0) gains += change;
+        else losses -= change;
+    }
+    if (losses === 0) return 100;
+    const rs = gains / losses;
+    return 100 - 100 / (1 + rs);
+}
+
+async function checkMarket() {
+    // 1. Prendi dati di mercato per ETHUSDT
+    const symbol = "ETHUSDT";
+    const interval = "1m"; // timeframe 1 minuto
+    const limit = 50;
+
+    const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=50`);
+    const candles = response.data.result.map((c: any) => parseFloat(c.close));
+
+    // 2. Calcolo indicatori
+    const maFast = sma(candles, 10);
+    const maSlow = sma(candles, 30);
+    const currentRSI = rsi(candles, 14);
+    const currentPrice = candles[candles.length - 1];
+
+    // 3. Decidi direzione mercato
+    let action: "LONG" | "SHORT" | null = null;
+    if (maFast > maSlow && currentRSI < 70) {
+        action = "LONG";
+    } else if (maFast < maSlow && currentRSI > 30) {
+        action = "SHORT";
+    }
+
+    // 4. Simula apertura ordine
+    if (action) {
+        const tpPercent = action === "LONG" ? 2 : -2; // TP +2% per long, -2% per short
+        const slPercent = action === "LONG" ? -1 : 1; // SL -1% per long, +1% per short
+
+        const takeProfit = currentPrice * (1 + tpPercent / 100);
+        const stopLoss = currentPrice * (1 + slPercent / 100);
+
+        console.log(`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
+        await sendTelegramMessage(String(8524476908),`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`); 
+    } else {
+        console.log("Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.");
+        //await sendTelegramMessage(String(8524476908),`Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.`);
+    }
+}
+
+// Esegui il controllo ogni minuto
+setInterval(checkMarket, 60 * 1000);
 
 //********************************************************************************************//
-// Inizio codice specifico delle API ByBit
+// Fine logica bot
 //********************************************************************************************//
-
-
-
-
-//********************************************************************************************//
-// Fine codice Telegram Bot
-//********************************************************************************************//
-
 
 //********************************************************************************************//
 // Default route e gestione degli errori

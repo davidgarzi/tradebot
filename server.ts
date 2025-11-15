@@ -9,6 +9,7 @@ import _streamifier from "streamifier";
 import _bcrypt from "bcryptjs";
 import _jwt from "jsonwebtoken";
 import axios from 'axios';
+import crypto from 'crypto';
 
 // Lettura delle password e parametri fondamentali
 _dotenv.config({ "path": ".env" });
@@ -113,10 +114,10 @@ async function handleTelegramUpdate(update: any) {
         await sendTelegramMessage(chatId, "👋 Ciao! Sono il tuo bot Telegram collegato al server Node.js.");
     } else if (text.toLowerCase().includes("ciao")) {
         await sendTelegramMessage(chatId, "Ciao anche a te! 😊");
-    } else if (text=="/capitale") {
+    } else if (text == "/capitale") {
         await walletBalance("UNIFIED", chatId);
     }
-    else  {
+    else {
         await sendTelegramMessage(chatId, `Hai scritto: ${text}`);
     }
 }
@@ -170,14 +171,57 @@ async function walletBalance(account: any, chatId: any) {
         secret: SECRET_API_KEY_BYBIT,
     });
 
-    client.getWalletBalance({accountType: accountType,})
-    .catch(async (error) => {
-        await sendTelegramMessage(chatId, JSON.stringify(error));
-    })
-    .then(async (response) => {
-        await sendTelegramMessage(chatId, String(response.result.list[0].totalEquity));
-    });
+    client.getWalletBalance({ accountType: accountType, })
+        .catch(async (error) => {
+            await sendTelegramMessage(chatId, JSON.stringify(error));
+        })
+        .then(async (response) => {
+            await sendTelegramMessage(chatId, String(response.result.list[0].totalEquity));
+        });
 };
+
+async function placeMarketOrder(symbol: string, side: "Buy" | "Sell", qty: number) {
+    const url = "https://api.bybit.com/v5/order/create";
+    const timestamp = Date.now().toString();
+
+    // Parametri dell'ordine
+    const body = {
+        category: "linear",
+        symbol,
+        side,
+        orderType: "Market",
+        qty,
+        leverage: "5",
+        timeInForce: "IOC"
+    };
+
+    // Firma (Bybit v5 richiede: timestamp + api_key + body_json)
+    const payload = timestamp + API_KEY_BYBIT + JSON.stringify(body);
+    const sign = crypto.createHmac("sha256", SECRET_API_KEY_BYBIT).update(payload).digest("hex");
+
+    try {
+        const response = await axios.post(
+            url,
+            body,
+            {
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-BAPI-API-KEY": API_KEY_BYBIT,
+                    "X-BAPI-SIGN": sign,
+                    "X-BAPI-TIMESTAMP": timestamp,
+                    "X-BAPI-RECV-WINDOW": "5000"
+                }
+            }
+        );
+
+        console.log("Ordine inviato:", response.data);
+        return response.data;
+
+    } catch (err: any) {
+        console.error("Errore nell'invio dell'ordine:", err.response?.data || err.message);
+        throw err;
+    }
+}
 //********************************************************************************************//
 // Fine codice bybit
 //********************************************************************************************//
@@ -212,9 +256,9 @@ async function checkMarket() {
     const limit = 50;
 
     const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=50`);
-   
+
     const candles = response.data.result.list.map((c: any) => parseFloat(c[4]));
-    console.log("candles: "+candles);
+    console.log("candles: " + candles);
     console.log(JSON.stringify(response.data.result.list, null, 2));
 
 
@@ -229,28 +273,28 @@ async function checkMarket() {
     // 3. Decidi direzione mercato
     let action: "LONG" | "SHORT" | null = null;
 
-// Parametri di controllo extra
-const maDiffThreshold = 0.5; // percentuale minima tra MA per considerare un segnale valido
-const rsiOverbought = 70;
-const rsiOversold = 30;
+    // Parametri di controllo extra
+    const maDiffThreshold = 0.3; // percentuale minima tra MA per considerare un segnale valido
+    const rsiOverbought = 70;
+    const rsiOversold = 30;
 
-// Differenza percentuale tra MA
-const maDiffPercent = ((maFast - maSlow) / maSlow) * 100;
+    // Differenza percentuale tra MA
+    const maDiffPercent = ((maFast - maSlow) / maSlow) * 100;
 
-// Logica per LONG
-if (maFast > maSlow && currentRSI < rsiOverbought && maDiffPercent > maDiffThreshold) {
-    action = "LONG";
-}
-// Logica per SHORT
-else if (maFast < maSlow && currentRSI > rsiOversold && maDiffPercent < -maDiffThreshold) {
-    action = "SHORT";
-}
-// Se nessuna condizione soddisfatta, action rimane null
-else {
-    action = null;
-}
+    // Logica per LONG
+    if (maFast > maSlow && currentRSI < rsiOverbought && maDiffPercent > maDiffThreshold) {
+        action = "LONG";
+    }
+    // Logica per SHORT
+    else if (maFast < maSlow && currentRSI > rsiOversold && maDiffPercent < -maDiffThreshold) {
+        action = "SHORT";
+    }
+    // Se nessuna condizione soddisfatta, action rimane null
+    else {
+        action = null;
+    }
 
-console.log("Azione decisa:", action);
+    console.log("Azione decisa:" + action + " con maDiffPercent: " + maDiffPercent.toFixed(2) + "%  ");
 
     // 4. Simula apertura ordine
     if (action) {
@@ -261,10 +305,12 @@ console.log("Azione decisa:", action);
         const stopLoss = currentPrice * (1 + slPercent / 100);
 
         console.log(`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
-        //await sendTelegramMessage(String(8524476908),`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`); 
+        //const qty = 5 / currentPrice;
+        //await placeMarketOrder("ETHUSDT","Buy", qty)
+        await sendTelegramMessage("@BotTradeDavide",`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`); 
     } else {
         console.log("Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.");
-        //await sendTelegramMessage(String(8524476908),`Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.`);
+        //await sendTelegramMessage("@BotTradeDavide",`Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.`);
     }
 }
 

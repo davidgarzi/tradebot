@@ -222,6 +222,45 @@ async function placeMarketOrder(symbol: string, side: "Buy" | "Sell", qty: numbe
         throw err;
     }
 }
+
+async function getOpenPositions() {
+    const url = "https://api.bybit.com/v5/position/list";
+
+    const timestamp = Date.now().toString();
+    const queryString = `category=linear&settleCoin=USDT`;
+
+    // Firma richiesta
+    const signature = crypto
+        .createHmac("sha256", SECRET_API_KEY_BYBIT)
+        .update(timestamp + API_KEY_BYBIT + "5000" + queryString)
+        .digest("hex");
+
+    try {
+        const response = await axios.get(`${url}?${queryString}`, {
+            headers: {
+                "X-BAPI-API-KEY": API_KEY_BYBIT,
+                "X-BAPI-SIGN": signature,
+                "X-BAPI-TIMESTAMP": timestamp,
+                "X-BAPI-RECV-WINDOW": "5000"
+            }
+        });
+
+        const positions = response.data.result.list;
+        console.log("data2" + JSON.stringify(response.data));
+        // Filtra solo le posizioni realmente aperte (size > 0)
+        const openPositions = positions.filter((p: any) => parseFloat(p.size) > 0);
+
+        console.log("Posizioni aperte:", openPositions.length);
+        return {
+            count: openPositions.length,
+            list: openPositions
+        };
+
+    } catch (err: any) {
+        console.error("Errore nel recupero posizioni:", err.response?.data || err);
+        return { count: 0, list: [] };
+    }
+}
 //********************************************************************************************//
 // Fine codice bybit
 //********************************************************************************************//
@@ -230,7 +269,7 @@ async function placeMarketOrder(symbol: string, side: "Buy" | "Sell", qty: numbe
 //********************************************************************************************//
 // Funzione helper per calcolare media mobile semplice
 function sma(data: number[], period: number): number {
-    const slice = data.slice(-period);
+    const slice = data.slice(0, period); // prendi le prime `period` candele
     const sum = slice.reduce((a, b) => a + b, 0);
     return sum / period;
 }
@@ -239,78 +278,89 @@ function sma(data: number[], period: number): number {
 function rsi(data: number[], period: number): number {
     let gains = 0;
     let losses = 0;
-    for (let i = data.length - period; i < data.length - 1; i++) {
-        const change = data[i + 1] - data[i];
+
+    // Scorri le prime `period+1` candele perché useremo change tra candle[i] e candle[i+1]
+    for (let i = 0; i < period; i++) {
+        const change = data[i] - data[i + 1]; // invertito perché array più recente a indice 0
         if (change > 0) gains += change;
         else losses -= change;
     }
+
     if (losses === 0) return 100;
     const rs = gains / losses;
     return 100 - 100 / (1 + rs);
 }
 
 async function checkMarket() {
-    // 1. Prendi dati di mercato per ETHUSDT
-    const symbol = "ETHUSDT";
-    const interval = "1m"; // timeframe 1 minuto
-    const limit = 50;
-
-    const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=50`);
-
-    const candles = response.data.result.list.map((c: any) => parseFloat(c[4]));
-    //console.log("candles: " + candles);
-    //console.log(JSON.stringify(response.data.result.list, null, 2));
-
-
-    // 2. Calcolo indicatori
-    const maFast = sma(candles, 10);
-    const maSlow = sma(candles, 30);
-    const currentRSI = rsi(candles, 14);
-    const currentPrice = candles[candles.length - 1];
-
-    console.log(`MA10: ${maFast.toFixed(2)}, MA30: ${maSlow.toFixed(2)}, RSI: ${currentRSI.toFixed(2)}`);
-
-    // 3. Decidi direzione mercato
-    let action: "LONG" | "SHORT" | null = null;
-
-    // Parametri di controllo extra
-    const maDiffThreshold = 0.3; // percentuale minima tra MA per considerare un segnale valido
-    const rsiOverbought = 70;
-    const rsiOversold = 30;
-
-    // Differenza percentuale tra MA
-    const maDiffPercent = ((maFast - maSlow) / maSlow) * 100;
-
-    // Logica per LONG
-    if (maFast > maSlow && currentRSI < rsiOverbought && maDiffPercent > maDiffThreshold) {
-        action = "LONG";
+    let pOpen = await getOpenPositions();
+    if (pOpen.count > 0) {
+        console.log("Posizione già aperta, salto questo ciclo.");
+        console.log(pOpen.list);
+        return;
     }
-    // Logica per SHORT
-    else if (maFast < maSlow && currentRSI > rsiOversold && maDiffPercent < -maDiffThreshold) {
-        action = "SHORT";
-    }
-    // Se nessuna condizione soddisfatta, action rimane null
     else {
-        action = null;
-    }
+        // 1. Prendi dati di mercato per ETHUSDT
+        const symbol = "ETHUSDT";
+        const interval = "1"; // timeframe 1 minuto
+        const limit = 200;
 
-    console.log("Azione decisa:" + action + " con maDiffPercent: " + maDiffPercent.toFixed(2) + "%  ");
+        const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=200`);
 
-    // 4. Simula apertura ordine
-    if (action) {
-        const tpPercent = action === "LONG" ? 1 : -2; // TP +2% per long, -2% per short
-        const slPercent = action === "LONG" ? -0.5 : 1; // SL -1% per long, +1% per short
+        const candles = response.data.result.list.map((c: any) => parseFloat(c[4]));
+        //console.log("candles: " + candles);
+        //console.log(JSON.stringify(response.data.result.list, null, 2));
 
-        const takeProfit = currentPrice * (1 + tpPercent / 100);
-        const stopLoss = currentPrice * (1 + slPercent / 100);
 
-        console.log(`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
-        //const qty = 5 / currentPrice;
-        //await placeMarketOrder("ETHUSDT","Buy", qty)
-        await sendTelegramMessage("@BotTradeDavide",`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`); 
-    } else {
-        console.log("Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.");
-        //await sendTelegramMessage("@BotTradeDavide",`Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.`);
+        // 2. Calcolo indicatori
+        const maFast = sma(candles, 10);
+        const maSlow = sma(candles, 30);
+        const currentRSI = rsi(candles, 14);
+         const currentPrice = candles[0]; // primo elemento = prezzo corrente
+
+        console.log(`MA10: ${maFast.toFixed(2)}, MA30: ${maSlow.toFixed(2)}, RSI: ${currentRSI.toFixed(2)}`);
+
+        // 3. Decidi direzione mercato
+        let action: "LONG" | "SHORT" | null = null;
+
+        // Parametri di controllo extra
+        const maDiffThreshold = 0.05; // percentuale minima tra MA per considerare un segnale valido
+        const rsiOverbought = 55;
+        const rsiOversold = 45;
+
+        // Differenza percentuale tra MA
+        const maDiffPercent = ((maFast - maSlow) / maSlow) * 100;
+
+        // Logica per LONG
+        if (maFast > maSlow && currentRSI < rsiOverbought && maDiffPercent > maDiffThreshold) {
+            action = "LONG";
+        }
+        // Logica per SHORT
+        else if (maFast < maSlow && currentRSI > rsiOversold && maDiffPercent < -maDiffThreshold) {
+            action = "SHORT";
+        }
+        // Se nessuna condizione soddisfatta, action rimane null
+        else {
+            action = null;
+        }
+
+        console.log("Azione decisa:" + action + " con maDiffPercent: " + maDiffPercent.toFixed(2) + "%  ");
+
+        // 4. Simula apertura ordine
+        if (action) {
+            const tpPercent = action === "LONG" ? 1 : -1; // TP +2% per long, -2% per short
+            const slPercent = action === "LONG" ? -0.5 : 0.5; // SL -1% per long, +1% per short
+
+            const takeProfit = currentPrice * (1 + tpPercent / 100);
+            const stopLoss = currentPrice * (1 + slPercent / 100);
+
+            console.log(`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
+            //const qty = 5 / currentPrice;
+            //await placeMarketOrder("ETHUSDT","Buy", qty)
+            await sendTelegramMessage("@BotTradeDavide", `Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
+        } else {
+            console.log("Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.");
+            //await sendTelegramMessage("@BotTradeDavide",Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.);
+        }
     }
 }
 

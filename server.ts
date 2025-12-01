@@ -11,6 +11,11 @@ import _jwt from "jsonwebtoken";
 import axios from 'axios';
 import crypto from 'crypto';
 
+// Variabili relative a MongoDB ed Express
+import { MongoClient, ObjectId } from "mongodb";
+const DBNAME = process.env.DBNAME;
+const connectionString: string = process.env.connectionStringAtlas;
+
 // Lettura delle password e parametri fondamentali
 _dotenv.config({ "path": ".env" });
 const { RestClientV5 } = require('bybit-api');
@@ -116,11 +121,16 @@ async function handleTelegramUpdate(update: any) {
         await sendTelegramMessage(chatId, "Ciao anche a te! 😊");
     } else if (text == "/capitale") {
         await walletBalance("UNIFIED", chatId);
+    } else if (text == "/analisi") {
+        const risultati = await analisi(chatId);
+        console.log(risultati);
+        await sendTelegramMessage(chatId, `${JSON.stringify(risultati)}`);
     }
     else {
         await sendTelegramMessage(chatId, `Hai scritto: ${text}`);
     }
 }
+
 
 // Endpoint Webhook — riceve aggiornamenti da Telegram
 app.post("/telegram/webhook", async (req: any, res: any) => {
@@ -291,8 +301,8 @@ function rsi(data: number[], period: number): number {
     return 100 - 100 / (1 + rs);
 }
 
-async function checkMarket() {
-    let pOpen = await getOpenPositions();
+/* async function checkMarket() {
+    let pOpen = await getOpenPositions();  la funzione getOpenPositions() funziona e restituisce le posizioni aperte
     if (pOpen.count > 0) {
         console.log("Posizione già aperta, salto questo ciclo.");
         console.log(pOpen.list);
@@ -365,10 +375,208 @@ async function checkMarket() {
 }
 
 // Esegui il controllo ogni minuto
-setInterval(checkMarket, 60 * 1000);
+setInterval(checkMarket, 60 * 1000); */
+
+let pOpen = 0;
+let action: "LONG" | "SHORT" | null = null;
+let PPopen = 0;
+
+async function checkMarketSimulation() {
+
+    console.log("PoPEN INIZIO CHECK MERCATO: " + pOpen);
+    if (pOpen > 0) {
+        console.log("PoPEN IN IF >0: " + pOpen);
+        console.log("Posizione già aperta. Controllo TP/SL sull’ultima candela...");
+
+        // ==== 1) Scarico SOLO l'ultima candela chiusa ====
+        const response = await axios.get(
+            `https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=2`
+        );
+
+        const lastCandle = response.data.result.list[1];
+        // [1] = candela chiusa  → [0] è quella in formazione
+
+        const high = parseFloat(lastCandle[2]);
+        const low = parseFloat(lastCandle[3]);
+
+        // ==== 2) Dati posizione ====
+        const entryPrice = PPopen;
+        const side = action;
+
+        // ==== 3) Calcolo TP & SL ====
+        const tpPercent = action === "LONG" ? (10 / 10) : -(10 / 10);  //10%tp su leva 10 e 3.33% sl su leva 10
+        const slPercent = action === "LONG" ? -(3.33 / 10) : (3.33 / 10);
+
+        const takeProfit = entryPrice * (1 + tpPercent / 100);
+        const stopLoss = entryPrice * (1 + slPercent / 100);
+
+        console.log(`Entry: ${entryPrice}, TP: ${takeProfit}, SL: ${stopLoss}`);
+
+        // ==== 4) Controllo singola candela ====
+        let result: "TP" | "SL" | "NONE" = "NONE";
+        let exitPrice = entryPrice;
+
+        if (side === "LONG") {
+
+            if (low <= stopLoss) {
+                result = "SL";
+                exitPrice = stopLoss;
+            }
+            else if (high >= takeProfit) {
+                result = "TP";
+                exitPrice = takeProfit;
+            }
+        }
+
+        if (side === "SHORT") {
+
+            if (high >= stopLoss) {
+                result = "SL";
+                exitPrice = stopLoss;
+            }
+            else if (low <= takeProfit) {
+                result = "TP";
+                exitPrice = takeProfit;
+            }
+        }
+
+        // ==== 5) Risultato ====
+        if (result === "TP") {
+            console.log(`✔️ PROFITTO: TP raggiunto a ${exitPrice}`);
+            pOpen = 0;
+            await sendTelegramMessage("@BotTradeDavide", `✔️ Posizione chiusa in PROFITTO a ${exitPrice}`);
+        }
+        else if (result === "SL") {
+            console.log(`❌ PERDITA: SL raggiunto a ${exitPrice}`);
+            pOpen = 0;
+            await sendTelegramMessage("@BotTradeDavide", `❌ Posizione chiusa in PERDITA a ${exitPrice}`);
+        }
+        else {
+            console.log("⏳ Nell'ultima candela NON è stato toccato né TP né SL.");
+        }
+    }
+    else {
+        console.log("PoPEN IN ELSE: " + pOpen);
+        // 1. Prendi dati di mercato per ETHUSDT
+        const symbol = "ETHUSDT";
+        const interval = "1"; // timeframe 1 minuto
+        const limit = 200;
+
+        const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=ETHUSDT&interval=1&limit=200`);
+
+        const candles = response.data.result.list.map((c: any) => parseFloat(c[4]));
+        //console.log("candles: " + candles);
+        //console.log(JSON.stringify(response.data.result.list, null, 2));
+
+
+        // 2. Calcolo indicatori
+        const maFast = sma(candles, 10);
+        const maSlow = sma(candles, 30);
+        const currentRSI = rsi(candles, 14);
+        const currentPrice = candles[0]; // primo elemento = prezzo corrente
+
+        console.log(`MA10: ${maFast.toFixed(2)}, MA30: ${maSlow.toFixed(2)}, RSI: ${currentRSI.toFixed(2)}`);
+
+        // 3. Decidi direzione mercato
+        //let action: "LONG" | "SHORT" | null = null;
+
+        // Parametri di controllo extra
+        const maDiffThreshold = 0.05; // percentuale minima tra MA per considerare un segnale valido
+        const rsiOverbought = 55;
+        const rsiOversold = 45;
+
+        // Differenza percentuale tra MA
+        const maDiffPercent = ((maFast - maSlow) / maSlow) * 100;
+
+        // Logica per LONG
+        if (maFast > maSlow && currentRSI < rsiOverbought && maDiffPercent > maDiffThreshold) {
+            action = "LONG";
+        }
+        // Logica per SHORT
+        else if (maFast < maSlow && currentRSI > rsiOversold && maDiffPercent < -maDiffThreshold) {
+            action = "SHORT";
+        }
+        // Se nessuna condizione soddisfatta, action rimane null
+        else {
+            action = null;
+        }
+
+        console.log("Azione decisa:" + action + " con maDiffPercent: " + maDiffPercent.toFixed(2) + "%  ");
+
+        // 4. Simula apertura ordine
+        if (action) {
+            const tpPercent = action === "LONG" ? (10 / 10) : -(10 / 10);
+            const slPercent = action === "LONG" ? -(3.33 / 10) : (3.33 / 10);
+
+            const takeProfit = currentPrice * (1 + tpPercent / 100);
+            const stopLoss = currentPrice * (1 + slPercent / 100);
+
+            console.log(`Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
+            //const qty = 5 / currentPrice;
+            //await placeMarketOrder("ETHUSDT","Buy", qty)
+            PPopen = currentPrice;
+            pOpen = 1;
+            console.log("PoPEN PRIMA AWAIT: " + pOpen);
+            await sendTelegramMessage("@BotTradeDavide", `Avrei aperto un ordine ${action} a mercato su ETHUSDT a prezzo ${currentPrice.toFixed(2)}, Take Profit: ${takeProfit.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}`);
+            console.log("PoPEN DOPO AWAIT: " + pOpen);
+        } else {
+            console.log("Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.");
+            //await sendTelegramMessage("@BotTradeDavide",Nessuna opportunità di mercato rilevata su ETHUSDT in questo momento.);
+        }
+    }
+}
+
+// Esegui il controllo ogni minuto
+let isChecking = false;
+
+setInterval(async () => {
+    if (isChecking) return;
+    isChecking = true;
+    await checkMarketSimulation();
+    isChecking = false;
+}, 60 * 1000);
 
 //********************************************************************************************//
 // Fine logica bot
+//********************************************************************************************//
+//********************************************************************************************//
+// Chiamata a MongoDB
+//********************************************************************************************//
+async function analisi(chatId: any) {
+
+    const client = new MongoClient(connectionString);
+    await client.connect();
+
+    let collection = client.db(DBNAME).collection("Trades");
+
+    // ritorno la Promise
+    let rq = collection.find({}).toArray();
+
+    return rq
+        .then((data) => {
+
+            let vinti = 0;
+            let persi = 0;
+
+            data.forEach(t => {
+                if (t.Vinto === true) vinti++;
+                if (t.Perso === true) persi++;
+            });
+
+            return {
+                totale: data.length,
+                vinti,
+                persi
+            };
+        })
+        .catch((err) => {
+            throw new Error("Errore esecuzione query: " + err);
+        })
+        .finally(() => client.close());
+}
+
+//********************************************************************************************//
+// Fine chiamata a MongoDB
 //********************************************************************************************//
 
 //********************************************************************************************//

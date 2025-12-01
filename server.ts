@@ -404,8 +404,8 @@ async function checkMarketSimulation() {
         const side = action;
 
         // ==== 3) Calcolo TP & SL ====
-        const tpPercent = action === "LONG" ? (10 / 10) : -(10 / 10);  //10%tp su leva 10 e 3.33% sl su leva 10
-        const slPercent = action === "LONG" ? -(3.33 / 10) : (3.33 / 10);
+        const tpPercent = action === "LONG" ? (8 / 10) : -(8 / 10);  //8%tp su leva 10 e 3% sl su leva 10
+        const slPercent = action === "LONG" ? -(3 / 10) : (3 / 10);
 
         const takeProfit = entryPrice * (1 + tpPercent / 100);
         const stopLoss = entryPrice * (1 + slPercent / 100);
@@ -505,8 +505,8 @@ async function checkMarketSimulation() {
 
         // 4. Simula apertura ordine
         if (action) {
-            const tpPercent = action === "LONG" ? (10 / 10) : -(10 / 10);
-            const slPercent = action === "LONG" ? -(3.33 / 10) : (3.33 / 10);
+            const tpPercent = action === "LONG" ? (8 / 10) : -(8 / 10);
+            const slPercent = action === "LONG" ? -(3 / 10) : (3 / 10);
 
             const takeProfit = currentPrice * (1 + tpPercent / 100);
             const stopLoss = currentPrice * (1 + slPercent / 100);
